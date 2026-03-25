@@ -1,10 +1,7 @@
 /*
   netlify/functions/chat.js
   ─────────────────────────────────────────────────────
-  • Uses Google Gemini API (FREE — no credit card)
-  • Keeps API key secret in Netlify env vars
-  • Rate-limits: 30 messages per hour per IP
-  • Validates input before sending to Gemini
+  ✅  PRODUCTION VERSION
   ─────────────────────────────────────────────────────
 */
 
@@ -35,6 +32,11 @@ function recordRequest(ip) {
   history.push(now);
   ipHistory[ip] = history;
 }
+
+const ALLOWED_ORIGINS = [
+  "https://kem-deth.netlify.app",
+  "https://ask-kem-bot.netlify.app",
+];
 
 const SYSTEM_PROMPT = `You are an AI assistant on Kem Deth's portfolio website. Your job is to answer questions about Kem in a friendly, concise, and professional way.
 
@@ -95,13 +97,12 @@ Here is everything you know about Kem:
 - If asked if Kem is available for hire, say YES — actively looking for internships and junior frontend roles
 - Use **bold** for emphasis. Keep answers readable and clean.`;
 
-const ALLOWED_ORIGIN = "https://kem-deth.netlify.app";
-
 exports.handler = async function (event) {
   const origin = event.headers["origin"] || "";
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : "";
+
   const headers = {
-    "Access-Control-Allow-Origin":
-      origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : "",
+    "Access-Control-Allow-Origin": allowedOrigin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type": "application/json",
@@ -116,7 +117,6 @@ exports.handler = async function (event) {
       body: JSON.stringify({ error: "Method not allowed" }),
     };
 
-  // Rate limit
   const ip = getIP(event);
   if (checkLimit(ip).blocked) {
     return {
@@ -128,7 +128,6 @@ exports.handler = async function (event) {
     };
   }
 
-  // Parse body
   let body;
   try {
     body = JSON.parse(event.body);
@@ -180,8 +179,6 @@ exports.handler = async function (event) {
     };
   }
 
-  // Convert history to Gemini format
-  // Gemini uses "user" and "model" roles (not "assistant")
   const trimmed = history.slice(-MAX_HISTORY);
   const contents = trimmed.map((msg) => ({
     role: msg.role === "assistant" ? "model" : "user",
@@ -195,14 +192,9 @@ exports.handler = async function (event) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          system_instruction: {
-            parts: [{ text: SYSTEM_PROMPT }],
-          },
+          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents,
-          generationConfig: {
-            maxOutputTokens: 400,
-            temperature: 0.7,
-          },
+          generationConfig: { maxOutputTokens: 400, temperature: 0.7 },
         }),
       },
     );
@@ -215,16 +207,10 @@ exports.handler = async function (event) {
 
     const data = await res.json();
     const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-
     if (!reply) throw new Error("Empty reply from Gemini");
 
     recordRequest(ip);
-
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ reply }),
-    };
+    return { statusCode: 200, headers, body: JSON.stringify({ reply }) };
   } catch (err) {
     console.error(err);
     return {
