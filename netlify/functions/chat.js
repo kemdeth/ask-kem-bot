@@ -171,11 +171,16 @@ exports.handler = async function (event) {
 
   const API_KEY = process.env.GEMINI_API_KEY;
   if (!API_KEY) {
-    console.error("Missing GEMINI_API_KEY");
+    console.error(
+      "❌ GEMINI_API_KEY is not set in Netlify environment variables.",
+    );
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: "Server misconfiguration." }),
+      body: JSON.stringify({
+        error: "API key not configured. Please contact the site owner.",
+        code: "MISSING_API_KEY",
+      }),
     };
   }
 
@@ -200,9 +205,19 @@ exports.handler = async function (event) {
     );
 
     if (!res.ok) {
-      const err = await res.text();
-      console.error("Gemini error:", err);
-      throw new Error("Gemini API error");
+      const errText = await res.text();
+      console.error("Gemini API error:", res.status, errText);
+
+      // Return specific status so the client can show a useful message
+      return {
+        statusCode: 502,
+        headers,
+        body: JSON.stringify({
+          error: "Failed to reach the AI. Please try again shortly.",
+          code: "GEMINI_ERROR",
+          geminiStatus: res.status,
+        }),
+      };
     }
 
     const data = await res.json();
@@ -212,12 +227,13 @@ exports.handler = async function (event) {
     recordRequest(ip);
     return { statusCode: 200, headers, body: JSON.stringify({ reply }) };
   } catch (err) {
-    console.error(err);
+    console.error("Function error:", err.message);
     return {
       statusCode: 502,
       headers,
       body: JSON.stringify({
         error: "Failed to get a response. Please try again.",
+        code: "UNKNOWN_ERROR",
       }),
     };
   }

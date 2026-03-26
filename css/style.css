@@ -1,9 +1,9 @@
 /* ═══════════════════════════════════════════
-   Ask Kem — AI Chat  |  chat.css
+   Ask Kem — AI Chat  |  style.css
    Theme: Dark Hacker (matches portfolio)
 ═══════════════════════════════════════════ */
 
-/* ─── TOKENS (mirrors portfolio) ─────── */
+/* ─── TOKENS ──────────────────────────── */
 :root {
   --neon: #22ff6e;
   --neon-dim: #0fbe4f;
@@ -24,8 +24,7 @@
   --radius-sm: 8px;
   --ease: cubic-bezier(0.23, 1, 0.32, 1);
   --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --header-h: 60px;
-  --input-h: 80px;
+  --header-h: 62px;
 }
 
 [data-theme="light"] {
@@ -101,69 +100,67 @@ textarea {
   padding: 0 1.25rem;
   display: flex;
   align-items: center;
-  gap: 1rem;
-}
-.back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  padding: 0.38rem 0.75rem;
-  border-radius: 100px;
-  border: 1px solid var(--card-border);
-  background: var(--card-bg);
-  transition:
-    color 0.2s,
-    border-color 0.2s;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.back-btn:hover {
-  color: var(--neon);
-  border-color: var(--neon);
-  opacity: 1;
+  justify-content: space-between;
 }
 
+/* Left — live badge */
+.header-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 100px;
+  border: 1px solid rgba(34, 255, 110, 0.2);
+  background: rgba(34, 255, 110, 0.06);
+  font-family: var(--font-m);
+  font-size: 0.68rem;
+  color: var(--neon);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+/* Center — brand */
 .chat-header-brand {
   display: flex;
   align-items: center;
   gap: 0.65rem;
-  flex: 1;
-  justify-content: center;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
 }
 .bot-avatar-sm {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--neon-dim), var(--neon));
   display: flex;
   align-items: center;
   justify-content: center;
   font-family: var(--font-m);
-  font-size: 0.6rem;
+  font-size: 0.58rem;
   font-weight: 600;
   color: #050e08;
   flex-shrink: 0;
-  box-shadow: 0 0 12px var(--neon-glow);
+  box-shadow: 0 0 14px var(--neon-glow);
 }
 .chat-header-title {
   font-family: var(--font-s);
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 800;
   color: var(--text);
   display: block;
   line-height: 1.2;
 }
 .chat-header-sub {
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
   font-family: var(--font-m);
+  display: block;
+  line-height: 1;
 }
+
+/* Online dot (used in badge) */
 .online-dot {
   width: 7px;
   height: 7px;
@@ -172,9 +169,14 @@ textarea {
   animation: pulse 2s ease-in-out infinite;
   flex-shrink: 0;
 }
+.status-label {
+  line-height: 1;
+}
+
+/* Right — theme toggle */
 .theme-toggle {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 8px;
   border: 1px solid var(--card-border);
   background: var(--card-bg);
@@ -330,7 +332,7 @@ textarea {
   flex-shrink: 0;
   background: var(--bg);
   border-top: 1px solid var(--card-border);
-  padding: 0.85rem 1.25rem 0.6rem;
+  padding: 0.85rem 1.25rem 0.65rem;
 }
 .chat-input-inner {
   max-width: 760px;
@@ -401,6 +403,14 @@ textarea {
   color: var(--text-muted);
   text-align: center;
   font-family: var(--font-m);
+}
+.input-hint a {
+  color: var(--neon);
+  opacity: 0.75;
+  transition: opacity 0.2s;
+}
+.input-hint a:hover {
+  opacity: 1;
 }
 
 /* ─── ERROR STATE ─────────────────────── */
@@ -473,7 +483,9 @@ textarea {
   .chat-input-wrap {
     padding: 0.7rem 0.9rem 0.5rem;
   }
-  .back-btn span {
-    display: none;
+  /* Keep brand centered on mobile too */
+  .chat-header-brand {
+    left: 50%;
+    transform: translateX(-50%);
   }
 }

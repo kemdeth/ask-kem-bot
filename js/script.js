@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────
-   Ask Kem — chat.js
+   Ask Kem — script.js
    Handles UI, sends messages to serverless
    function, renders responses.
 ───────────────────────────────────────── */
@@ -37,7 +37,7 @@ const userInput = document.getElementById("userInput");
 const sendBtn = document.getElementById("sendBtn");
 const suggestions = document.getElementById("suggestions");
 
-/* ── Conversation history (sent to API each time) ── */
+/* ── Conversation history ── */
 const history = [];
 
 /* ── Rate limit: max 15 messages per session ── */
@@ -73,7 +73,7 @@ async function handleSend() {
   const text = userInput.value.trim();
   if (!text) return;
 
-  // Rate limit
+  // Client-side rate limit
   if (msgCount >= MSG_LIMIT) {
     appendBotBubble(
       "You've reached the session limit of 15 messages. Please refresh to start a new chat.",
@@ -106,17 +106,29 @@ async function handleSend() {
     removeTyping(typingEl);
 
     if (!res.ok) {
+      // Try to parse the error body for a specific message
       const err = await res.json().catch(() => ({}));
+
       if (res.status === 429) {
         appendBotBubble(
           "⏳ Too many requests. Please wait a moment before sending again.",
           true,
         );
+      } else if (res.status === 500 && err.code === "MISSING_API_KEY") {
+        appendBotBubble(
+          "⚙️ The AI is not configured yet. If you're the site owner, please set your GEMINI_API_KEY in Netlify environment variables.",
+          true,
+        );
+      } else if (res.status === 502) {
+        appendBotBubble(
+          "🔌 Could not reach the AI service. Please try again in a moment.",
+          true,
+        );
       } else {
         appendBotBubble("❌ Something went wrong. Please try again.", true);
       }
-      // Remove the last user message from history on error
-      history.pop();
+
+      history.pop(); // Remove the last user message on error
       return;
     }
 
@@ -178,7 +190,7 @@ function scrollBottom() {
   if (main) main.scrollTop = main.scrollHeight;
 }
 
-/* Format reply: convert **bold**, newlines, URLs */
+/* Format reply: convert **bold**, newlines */
 function formatReply(text) {
   return escapeHTML(text)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
