@@ -1,7 +1,7 @@
 /*
   netlify/functions/chat.js
   ─────────────────────────────────────────────────────
-  ✅  PRODUCTION VERSION
+  ✅  PRODUCTION VERSION — FIXED
   ─────────────────────────────────────────────────────
 */
 
@@ -99,7 +99,13 @@ Here is everything you know about Kem:
 
 exports.handler = async function (event) {
   const origin = event.headers["origin"] || "";
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : "";
+
+  // FIX: always allow requests from allowed origins,
+  // and fall back to the first allowed origin for same-origin requests
+  // (Netlify functions called from the same site may have no origin header)
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin)
+    ? origin
+    : ALLOWED_ORIGINS[0];
 
   const headers = {
     "Access-Control-Allow-Origin": allowedOrigin,
@@ -108,15 +114,20 @@ exports.handler = async function (event) {
     "Content-Type": "application/json",
   };
 
-  if (event.httpMethod === "OPTIONS")
+  // Handle CORS preflight
+  if (event.httpMethod === "OPTIONS") {
     return { statusCode: 204, headers, body: "" };
-  if (event.httpMethod !== "POST")
+  }
+
+  if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
       headers,
       body: JSON.stringify({ error: "Method not allowed" }),
     };
+  }
 
+  // Rate limit check
   const ip = getIP(event);
   if (checkLimit(ip).blocked) {
     return {
@@ -128,6 +139,7 @@ exports.handler = async function (event) {
     };
   }
 
+  // Parse request body
   let body;
   try {
     body = JSON.parse(event.body);
@@ -141,6 +153,7 @@ exports.handler = async function (event) {
 
   const { history } = body;
 
+  // Validate history array
   if (!Array.isArray(history) || history.length === 0) {
     return {
       statusCode: 400,
@@ -149,6 +162,7 @@ exports.handler = async function (event) {
     };
   }
 
+  // Validate last message
   const lastMsg = history[history.length - 1];
   if (
     !lastMsg?.content ||
@@ -169,6 +183,7 @@ exports.handler = async function (event) {
     };
   }
 
+  // Check API key
   const API_KEY = process.env.GEMINI_API_KEY;
   if (!API_KEY) {
     console.error(
@@ -184,6 +199,7 @@ exports.handler = async function (event) {
     };
   }
 
+  // Build Gemini request
   const trimmed = history.slice(-MAX_HISTORY);
   const contents = trimmed.map((msg) => ({
     role: msg.role === "assistant" ? "model" : "user",
@@ -207,8 +223,6 @@ exports.handler = async function (event) {
     if (!res.ok) {
       const errText = await res.text();
       console.error("Gemini API error:", res.status, errText);
-
-      // Return specific status so the client can show a useful message
       return {
         statusCode: 502,
         headers,
@@ -222,10 +236,18 @@ exports.handler = async function (event) {
 
     const data = await res.json();
     const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (!reply) throw new Error("Empty reply from Gemini");
+
+    if (!reply) {
+      console.error("Empty reply from Gemini:", JSON.stringify(data));
+      throw new Error("Empty reply from Gemini");
+    }
 
     recordRequest(ip);
-    return { statusCode: 200, headers, body: JSON.stringify({ reply }) };
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({ reply }),
+    };
   } catch (err) {
     console.error("Function error:", err.message);
     return {
