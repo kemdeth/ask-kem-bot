@@ -36,14 +36,17 @@ function recordRequest(ip) {
 const ALLOWED_ORIGINS = [
   "https://kem-deth.netlify.app",
   "https://ask-kem-bot.netlify.app",
+  "http://localhost:8888",
+  "http://localhost:5500",
+  "http://127.0.0.1:5500",
 ];
 
-const SYSTEM_PROMPT = `You are an AI assistant on Kem Deth's portfolio website. Your job is to answer questions about Kem in a friendly, concise, and professional way.
+const SYSTEM_PROMPT = `You are an AI assistant on Kem Detna's portfolio website. Your job is to answer questions about Kem in a friendly, concise, and professional way.
 
 Here is everything you know about Kem:
 
 **Personal**
-- Full name: Kem Deth
+- Full name: Kem Detna
 - Location: Phnom Penh, Cambodia
 - Role: Frontend Developer (seeking internships and junior roles)
 - Open to: Remote and on-site positions
@@ -100,12 +103,9 @@ Here is everything you know about Kem:
 exports.handler = async function (event) {
   const origin = event.headers["origin"] || "";
 
-  // FIX: always allow requests from allowed origins,
-  // and fall back to the first allowed origin for same-origin requests
-  // (Netlify functions called from the same site may have no origin header)
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin)
-    ? origin
-    : ALLOWED_ORIGINS[0];
+  // Allow requests from specified origins, or fallback to "*" for same-site serverless calls
+  const allowedOrigin =
+    origin && ALLOWED_ORIGINS.includes(origin) ? origin : "*";
 
   const headers = {
     "Access-Control-Allow-Origin": allowedOrigin,
@@ -213,7 +213,7 @@ exports.handler = async function (event) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents,
           generationConfig: { maxOutputTokens: 400, temperature: 0.7 },
         }),
