@@ -1,36 +1,52 @@
 /*
-  netlify/functions/chat.js  (FIXED)
+  netlify/functions/chat.js
   ─────────────────────────────────────────────────────
   Serverless function: receives user message → calls Gemini → returns reply.
-
-  FIXES vs original:
-  1. Added input validation — empty/missing message returns 400.
-  2. Gemini model string updated to a stable ID.
-  3. Rate limit count only recorded on SUCCESS (not on errors).
-  4. Catches JSON parse failure on malformed request body.
-  5. Clears timeout before every early return to prevent dangling timers.
 */
 
-// const MAX_PER_HOUR = 100;
-const MAX_PER_HOUR = 999; 
+const MAX_PER_HOUR = 500; // generous limit for real users
+const MAX_PER_MINUTE = 10; // anti-spam: max 10 messages per minute per IP
 const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
 
 // In-memory rate limiting — resets on cold start (fine for serverless)
 const ipHistory = {};
 
 // ── SYSTEM PROMPT ────────────────────────────────────────────────────────────
-// Update this with Kem's real info: skills, projects, contact details, etc.
-const SYSTEM_PROMPT = `You are "Ask Kem", the AI portfolio assistant for Kem Deth — a web developer based in Phnom Penh, Cambodia.
+const SYSTEM_PROMPT = `You are the professional AI Portfolio Assistant for Kem Deth. Your goal is to represent Kem to recruiters with high-impact, scannable facts.
 
-Your job is to answer visitor questions about Kem in a friendly, concise, and professional tone.
-Use markdown formatting where it helps clarity (bold for emphasis, bullet lists for skills/projects).
-Keep answers focused and under 200 words unless a longer answer is clearly needed.
+### KEM DETH'S PROFILE
+- **Identity**: Year 3 Computer Science student at the **Royal University of Phnom Penh (RUPP)**.
+- **Technical Expertise**: Expert in **HTML5**, **CSS3**, and **JavaScript (ES6+)**.
+- **Backend & APIs**: Proficient in **PHP** and **Laravel**. Experienced in **MySQL**, **RESTful APIs**, and **API Authentication**.
+- **Workflow**: Professional use of **Git/GitHub** and **Netlify**.
 
-If you genuinely don't know something specific about Kem, say so honestly and direct the visitor to contact him directly:
-- Email: kemdeth@example.com  ← replace with real email
-- Portfolio: https://kem-deth.netlify.app/
+### WHY HIRE KEM?
+- **Performance-Driven**: Achieved a **95+ Lighthouse score** on his portfolio for speed and SEO.
+- **Innovation-Focused**: Built this custom **AI Assistant** using **Node.js** and the **Gemini API**.
+- **Immediate Value**: Actively seeking **Internship or Junior roles** and ready to contribute today.
 
-Never fabricate facts about Kem. Never discuss topics unrelated to his professional background.`;
+### CONTACT KEM DETH
+- **Phone**: 096 930 4491
+- **Email**: kemdeth25@gmail.com
+- **Telegram**: [@KEMDETH](https://t.me/KEMDETH)
+
+### RULES FOR COMMUNICATION
+1. **No Duplicates**: When providing the Telegram link, only use this format: [Telegram Name](URL). Do not repeat the URL.
+2. **Be Punchy**: Use short, powerful sentences for easy scanning.
+3. **Formatting**: Always use **bold** for tech keywords and bullet points for lists.
+4. **Professional Tone**: Act as a talent agent for Kem.
+5. **Call to Action**: Encourage the recruiter to reach out via Phone, Email, or Telegram.
+6. **No Fluff**: Avoid generic statements. Focus on specific achievements and skills.
+7. **Stay On Brand**: Always align responses with Kem's profile and value proposition.
+8. **Error Handling**: If you don't understand a question, respond with "Could you please clarify your question about Kem's profile?"
+9. **Limit Responses**: Keep answers concise and relevant to Kem's portfolio and skills.
+10. **No Personal Opinions**: Stick to factual information about Kem's skills and experience.
+11. **Avoid Jargon**: Use clear language that recruiters can understand.
+12. **Highlight Unique Selling Points**: Emphasize what makes Kem stand out.
+13. **Be Responsive**: Answer questions directly and efficiently.
+14. **Maintain Professionalism**: Ensure all responses reflect a professional image of Kem Deth.
+15. **Complete Messages**: Always provide a full response; ensure all relevant info is included.`;
 
 // ── HANDLER ──────────────────────────────────────────────────────────────────
 exports.handler = async (event) => {
@@ -57,15 +73,33 @@ exports.handler = async (event) => {
   // ── 1. Rate Limiting ────────────────────────────────────────────────────────
   const ip = event.headers["x-nf-client-connection-ip"] || "unknown";
   const now = Date.now();
+
+  // Filter to only requests within the last hour
   const history = (ipHistory[ip] || []).filter((t) => now - t < HOUR_MS);
 
-  if (history.length >= MAX_PER_HOUR) {
-    console.warn(`Rate limit hit for IP: ${ip}`);
+  // Count requests in the last minute for anti-spam
+  const recentMinute = history.filter((t) => now - t < MINUTE_MS);
+
+  if (recentMinute.length >= MAX_PER_MINUTE) {
+    console.warn(`Per-minute rate limit hit for IP: ${ip}`);
     return {
       statusCode: 429,
       headers,
       body: JSON.stringify({
-        error: "Rate limit exceeded. Please try again later.",
+        error:
+          "⏱️ Slow down a little! You can send up to 10 messages per minute. Please wait a moment.",
+      }),
+    };
+  }
+
+  if (history.length >= MAX_PER_HOUR) {
+    console.warn(`Hourly rate limit hit for IP: ${ip}`);
+    return {
+      statusCode: 429,
+      headers,
+      body: JSON.stringify({
+        error:
+          "🚦 You've reached the hourly limit. Please come back in a little while!",
       }),
     };
   }
@@ -84,7 +118,6 @@ exports.handler = async (event) => {
     };
   }
 
-  // FIX: Validate message is not empty
   if (!userMessage) {
     return {
       statusCode: 400,
@@ -105,7 +138,6 @@ exports.handler = async (event) => {
   }
 
   // ── 4. Build Gemini request ─────────────────────────────────────────────────
-  // Map history to Gemini format; guard against malformed entries
   const contents = chatHistory
     .filter((m) => m && m.role && m.content)
     .map((msg) => ({
@@ -113,7 +145,6 @@ exports.handler = async (event) => {
       parts: [{ text: String(msg.content) }],
     }));
 
-  // Append the new user message
   contents.push({ role: "user", parts: [{ text: userMessage }] });
 
   // ── 5. Call Gemini with timeout ─────────────────────────────────────────────
@@ -122,8 +153,6 @@ exports.handler = async (event) => {
 
   let res;
   try {
-    // FIX: Use gemini-2.0-flash which is the stable, production-ready model.
-    // Switch to gemini-2.5-flash-preview-05-20 once it's GA if you want 2.5.
     res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
@@ -147,14 +176,14 @@ exports.handler = async (event) => {
       return {
         statusCode: 504,
         headers,
-        body: JSON.stringify({ error: "AI timed out. Please try again." }),
+        body: JSON.stringify({ error: "⏳ AI timed out. Please try again." }),
       };
     }
     console.error("Fetch error:", err.message);
     return {
       statusCode: 502,
       headers,
-      body: JSON.stringify({ error: "Failed to reach AI service." }),
+      body: JSON.stringify({ error: "🔌 Failed to reach AI service." }),
     };
   }
 
@@ -177,7 +206,7 @@ exports.handler = async (event) => {
         statusCode: 429,
         headers,
         body: JSON.stringify({
-          error: "AI quota exceeded. Please try again shortly.",
+          error: "🚦 AI quota exceeded. Please try again shortly.",
         }),
       };
     }
