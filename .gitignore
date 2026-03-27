@@ -1,5 +1,5 @@
 
-# Environment variables — never commit these
+# Environment variables — NEVER commit these
 .env
 .env.local
 .env.*.local
@@ -11,5 +11,8 @@
 .DS_Store
 Thumbs.db
 
-# Netlify local dev
+# Netlify local dev cache
 .netlify/
+
+# Node (if you ever add package.json)
+node_modules/

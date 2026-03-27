@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════
-   Ask Kem — AI Chat  |  style.css
+   Ask Kem — AI Chat  |  style.css  (FIXED)
    Theme: Dark Hacker (matches portfolio)
 ═══════════════════════════════════════════ */
 
@@ -92,6 +92,8 @@ textarea {
   -webkit-backdrop-filter: blur(20px);
   flex-shrink: 0;
   z-index: 100;
+  /* FIX: needed so the absolute-positioned brand stays within header bounds */
+  position: relative;
 }
 .chat-header-inner {
   max-width: 760px;
@@ -160,7 +162,7 @@ textarea {
   line-height: 1;
 }
 
-/* Online dot (used in badge) */
+/* Online dot */
 .online-dot {
   width: 7px;
   height: 7px;
@@ -274,7 +276,24 @@ textarea {
   color: #fff;
 }
 
-/* typing indicator */
+/* FIX: error-bubble needs to override bot-bubble — more specific selector */
+.bot-bubble.error-bubble {
+  background: rgba(255, 80, 80, 0.08);
+  border: 1px solid rgba(255, 80, 80, 0.25);
+  color: #ff6b6b;
+}
+
+/* FIX: inline code style inside bot bubbles */
+.bot-bubble code {
+  font-family: var(--font-m);
+  font-size: 0.8em;
+  background: rgba(34, 255, 110, 0.08);
+  border: 1px solid rgba(34, 255, 110, 0.15);
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+}
+
+/* ─── TYPING INDICATOR ────────────────── */
 .typing-bubble {
   display: flex;
   align-items: center;
@@ -361,6 +380,8 @@ textarea {
   font-size: 0.9rem;
   line-height: 1.5;
   resize: none;
+  /* FIX: min-height so single line doesn't collapse */
+  min-height: 24px;
   max-height: 120px;
   overflow-y: auto;
 }
@@ -411,13 +432,6 @@ textarea {
 }
 .input-hint a:hover {
   opacity: 1;
-}
-
-/* ─── ERROR STATE ─────────────────────── */
-.error-bubble {
-  background: rgba(255, 80, 80, 0.08);
-  border: 1px solid rgba(255, 80, 80, 0.25);
-  color: #ff6b6b;
 }
 
 /* ─── KEYFRAMES ───────────────────────── */
@@ -483,7 +497,6 @@ textarea {
   .chat-input-wrap {
     padding: 0.7rem 0.9rem 0.5rem;
   }
-  /* Keep brand centered on mobile too */
   .chat-header-brand {
     left: 50%;
     transform: translateX(-50%);
