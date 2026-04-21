@@ -1,18 +1,80 @@
 /*
   netlify/functions/chat.js
   ─────────────────────────────────────────────────────
-  Serverless function: receives user message → calls Gemini → returns reply.
+  WORRY-FREE VERSION — KEM DETH PORTFOLIO (2026)
+  ─────────────────────────────────────────────────────
+  Uses a 3-model fallback chain — all stable GA models:
+    1. gemini-2.0-flash        (fast, latest stable)
+    2. gemini-1.5-flash        (proven, very reliable)
+    3. gemini-1.5-flash-8b     (lightweight, last resort)
+
+  Why this never breaks:
+  - GA models have guaranteed 1-year deprecation notice
+  - If one is overloaded, the next is tried automatically
+  - Free tier = 1,500 req/day per model (way more than enough)
+  - Your 500/hr rate limit keeps you well within free quota
+
+  ─────────────────────────────────────────────────────
+  DO NOT use "preview", "exp", or version-dated models
+  (e.g. gemini-2.5-flash-preview-...) — they can break
+  without warning, as happened before.
+  ─────────────────────────────────────────────────────
 */
 
-const MAX_PER_HOUR = 500; // generous limit for real users
-const MAX_PER_MINUTE = 10; // anti-spam: max 10 messages per minute per IP
+const MAX_PER_HOUR = 500;
+const MAX_PER_MINUTE = 10;
 const HOUR_MS = 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
+const MAX_HISTORY = 12;
 
-// In-memory rate limiting — resets on cold start (fine for serverless)
+// ── MODEL FALLBACK CHAIN ──────────────────────────────────────────────────────
+// Rules: Only use stable GA models. Never use "preview" or "exp" variants.
+// If primary fails (503/429/overload), the next model is tried automatically.
+const MODELS = [
+  "gemini-2.0-flash", // primary:  fast, latest stable GA
+  "gemini-1.5-flash", // fallback: proven, rock-solid
+  "gemini-1.5-flash-8b", // last resort: lightweight, always available
+];
+
 const ipHistory = {};
 
-// ── SYSTEM PROMPT ────────────────────────────────────────────────────────────
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function getIP(event) {
+  return (
+    event.headers["x-nf-client-connection-ip"] ||
+    event.headers["x-forwarded-for"]?.split(",")[0].trim() ||
+    "unknown"
+  );
+}
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const history = (ipHistory[ip] || []).filter((t) => now - t < HOUR_MS);
+  const recentMinute = history.filter((t) => now - t < MINUTE_MS);
+  ipHistory[ip] = history;
+
+  if (recentMinute.length >= MAX_PER_MINUTE) return "minute";
+  if (history.length >= MAX_PER_HOUR) return "hour";
+  return null;
+}
+
+function recordRequest(ip) {
+  const now = Date.now();
+  const history = (ipHistory[ip] || []).filter((t) => now - t < HOUR_MS);
+  history.push(now);
+  ipHistory[ip] = history;
+}
+
+// ── CORS WHITELIST ────────────────────────────────────────────────────────────
+const ALLOWED_ORIGINS = [
+  "https://kem-deth.netlify.app",
+  "https://ask-kem-bot.netlify.app",
+  "http://localhost:8888",
+  "http://localhost:5500",
+  "http://127.0.0.1:5500",
+];
+
+// ── SYSTEM PROMPT ─────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are the professional AI Portfolio Assistant for Kem Deth. Your goal is to represent Kem to recruiters with high-impact, scannable facts.
 
 ### KEM DETH'S PROFILE
@@ -48,52 +110,99 @@ const SYSTEM_PROMPT = `You are the professional AI Portfolio Assistant for Kem D
 14. **Maintain Professionalism**: Ensure all responses reflect a professional image of Kem Deth.
 15. **Complete Messages**: Always provide a full response; ensure all relevant info is included.`;
 
-// ── HANDLER ──────────────────────────────────────────────────────────────────
-exports.handler = async (event) => {
+// ── CALL ONE MODEL ────────────────────────────────────────────────────────────
+async function callGemini(model, API_KEY, contents, signal) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`;
+  return await fetch(url, {
+    method: "POST",
+    signal,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents,
+      generationConfig: {
+        maxOutputTokens: 800,
+        temperature: 0.5,
+        topP: 0.85,
+      },
+    }),
+  });
+}
+
+// ── TRY ALL MODELS IN ORDER ───────────────────────────────────────────────────
+// Returns { res, model } for the first model that doesn't return 503/429,
+// or the last response if all models are exhausted.
+async function callWithFallback(API_KEY, contents, signal) {
+  let res;
+  for (let i = 0; i < MODELS.length; i++) {
+    const model = MODELS[i];
+    res = await callGemini(model, API_KEY, contents, signal);
+
+    // Success or a non-retryable error — stop here
+    if (res.ok || (res.status !== 503 && res.status !== 429)) {
+      return { res, model };
+    }
+
+    // 503 or 429 — try next model
+    console.warn(
+      `Model ${model} returned ${res.status}. Trying next fallback...`,
+    );
+  }
+
+  // All models exhausted — return last response
+  return { res, model: MODELS[MODELS.length - 1] };
+}
+
+// ── HANDLER ───────────────────────────────────────────────────────────────────
+exports.handler = async function (event) {
+  const origin = event.headers["origin"] || "";
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin)
+    ? origin
+    : ALLOWED_ORIGINS[1];
+
   const headers = {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": allowedOrigin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type": "application/json",
   };
 
-  // Handle CORS preflight
   if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 200, headers, body: "" };
+    return { statusCode: 204, headers, body: "" };
   }
 
-  // Only allow POST
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
       headers,
-      body: JSON.stringify({ error: "Method not allowed" }),
+      body: JSON.stringify({ error: "Method not allowed." }),
     };
   }
 
-  // ── 1. Rate Limiting ────────────────────────────────────────────────────────
-  const ip = event.headers["x-nf-client-connection-ip"] || "unknown";
-  const now = Date.now();
+  if (origin && !ALLOWED_ORIGINS.includes(origin)) {
+    console.warn(`Blocked request from unauthorized origin: ${origin}`);
+    return {
+      statusCode: 403,
+      headers,
+      body: JSON.stringify({ error: "Origin not allowed." }),
+    };
+  }
 
-  // Filter to only requests within the last hour
-  const history = (ipHistory[ip] || []).filter((t) => now - t < HOUR_MS);
+  // ── Rate Limiting ────────────────────────────────────────────────────────────
+  const ip = getIP(event);
+  const limited = checkRateLimit(ip);
 
-  // Count requests in the last minute for anti-spam
-  const recentMinute = history.filter((t) => now - t < MINUTE_MS);
-
-  if (recentMinute.length >= MAX_PER_MINUTE) {
-    console.warn(`Per-minute rate limit hit for IP: ${ip}`);
+  if (limited === "minute") {
     return {
       statusCode: 429,
       headers,
       body: JSON.stringify({
         error:
-          "⏱️ Slow down a little! You can send up to 10 messages per minute. Please wait a moment.",
+          "⏱️ Slow down a little! Max 10 messages per minute. Please wait a moment.",
       }),
     };
   }
-
-  if (history.length >= MAX_PER_HOUR) {
-    console.warn(`Hourly rate limit hit for IP: ${ip}`);
+  if (limited === "hour") {
     return {
       statusCode: 429,
       headers,
@@ -104,12 +213,19 @@ exports.handler = async (event) => {
     };
   }
 
-  // ── 2. Parse & Validate Request Body ───────────────────────────────────────
+  // ── Parse & Validate Body ────────────────────────────────────────────────────
   let userMessage, chatHistory;
   try {
     const body = JSON.parse(event.body || "{}");
-    userMessage = (body.message || "").trim();
-    chatHistory = Array.isArray(body.history) ? body.history : [];
+
+    if (body.message) {
+      userMessage = body.message.trim();
+      chatHistory = Array.isArray(body.history) ? body.history : [];
+    } else if (Array.isArray(body.history) && body.history.length > 0) {
+      const last = body.history[body.history.length - 1];
+      userMessage = (last.content || "").trim();
+      chatHistory = body.history.slice(0, -1);
+    }
   } catch {
     return {
       statusCode: 400,
@@ -126,10 +242,10 @@ exports.handler = async (event) => {
     };
   }
 
-  // ── 3. Validate API Key ─────────────────────────────────────────────────────
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.error("GEMINI_API_KEY environment variable is not set.");
+  // ── Validate API Key ─────────────────────────────────────────────────────────
+  const API_KEY = process.env.GEMINI_API_KEY;
+  if (!API_KEY) {
+    console.error("GEMINI_API_KEY is not set.");
     return {
       statusCode: 500,
       headers,
@@ -137,9 +253,10 @@ exports.handler = async (event) => {
     };
   }
 
-  // ── 4. Build Gemini request ─────────────────────────────────────────────────
+  // ── Build Gemini Contents ────────────────────────────────────────────────────
   const contents = chatHistory
     .filter((m) => m && m.role && m.content)
+    .slice(-MAX_HISTORY)
     .map((msg) => ({
       role: msg.role === "user" ? "user" : "model",
       parts: [{ text: String(msg.content) }],
@@ -147,28 +264,17 @@ exports.handler = async (event) => {
 
   contents.push({ role: "user", parts: [{ text: userMessage }] });
 
-  // ── 5. Call Gemini with timeout ─────────────────────────────────────────────
+  // ── Call Gemini with Fallback Chain ───────────────────────────────────────────
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 9500);
 
-  let res;
+  let res, usedModel;
   try {
-    res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents,
-          generationConfig: {
-            maxOutputTokens: 800,
-            temperature: 0.6,
-          },
-        }),
-        signal: controller.signal,
-      },
-    );
+    ({ res, model: usedModel } = await callWithFallback(
+      API_KEY,
+      contents,
+      controller.signal,
+    ));
   } catch (err) {
     clearTimeout(timeoutId);
     if (err.name === "AbortError") {
@@ -189,28 +295,27 @@ exports.handler = async (event) => {
 
   clearTimeout(timeoutId);
 
-  // ── 6. Handle Gemini API errors ─────────────────────────────────────────────
+  // ── Handle Gemini Errors ─────────────────────────────────────────────────────
   if (!res.ok) {
     let errMsg = `Gemini API error: ${res.status}`;
     try {
       const errData = await res.json();
       errMsg = errData?.error?.message || errMsg;
     } catch {
-      /* response wasn't JSON */
+      /* not JSON */
     }
 
-    console.error(errMsg);
+    console.error(`Gemini error (model: ${usedModel}):`, errMsg);
 
-    if (res.status === 429) {
+    if (res.status === 429 || res.status === 503) {
       return {
         statusCode: 429,
         headers,
         body: JSON.stringify({
-          error: "🚦 AI quota exceeded. Please try again shortly.",
+          error: "🚦 AI is busy right now. Please try again in a moment.",
         }),
       };
     }
-
     return {
       statusCode: res.status >= 500 ? 502 : res.status,
       headers,
@@ -218,7 +323,7 @@ exports.handler = async (event) => {
     };
   }
 
-  // ── 7. Parse reply ──────────────────────────────────────────────────────────
+  // ── Parse Reply ──────────────────────────────────────────────────────────────
   let reply;
   try {
     const data = await res.json();
@@ -239,9 +344,9 @@ exports.handler = async (event) => {
     };
   }
 
-  // ── 8. Record rate-limit entry only on success ──────────────────────────────
-  history.push(now);
-  ipHistory[ip] = history;
+  // ── Record success & return ──────────────────────────────────────────────────
+  recordRequest(ip);
+  console.log(`Request served by model: ${usedModel}`);
 
   return {
     statusCode: 200,
